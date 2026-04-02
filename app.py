@@ -150,7 +150,11 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     # Dołączanie - formatowanie
     df_mm_selected['_join_key'] = df_mm_selected['keyword'].astype(str).str.strip().str.lower()
     
-    final_df = df_ahrefs.merge(df_mm_selected, on='_join_key', how='left')
+    final_df = df_ahrefs.merge(df_mm_selected, on='_join_key', how='outer')
+    
+    # Ratowanie nazw Keyword dla fraz obciętych (które były w SERP a rzekomo zniknęły bo nie miały metryki Ahrefs)
+    final_df[ahrefs_keyword_col] = final_df[ahrefs_keyword_col].fillna(final_df['_join_key'])
+    
     final_df = final_df.drop(columns=['_join_key', 'keyword'], errors='ignore')
     
     # Logika dopasowań
@@ -159,6 +163,12 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     
     # Optymalizacja wyświetlania do pełnych liczb całkowitych (typ Int64)
     final_df['Pozycja_MM'] = pd.to_numeric(final_df['rank_absolute'], errors='coerce').astype('Int64')
+    
+    # Automatyczne czyszczenie rzekomych floatów z ułamków do Int64 (naprawa problemu miejsc po przecinku)
+    for c in final_df.columns:
+        if final_df[c].dtype == 'float64' and c not in ['Pozycja_MM']:
+            if final_df[c].dropna().apply(lambda x: x.is_integer()).all():
+                final_df[c] = final_df[c].astype('Int64')
     
     # Likwidacja brudnych kolumn i estetyczne nazewnictwo
     final_df = final_df.drop(columns=['rank_absolute'], errors='ignore')
