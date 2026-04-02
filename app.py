@@ -73,18 +73,28 @@ def get_footprint(row):
 
 @st.cache_data(show_spinner=False)
 def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
-    # 1. Odczyt Ahrefs
+    # --- OPTYMALIZACJA ODCZYTU AHREFS ---
     if ahrefs_name.endswith('.csv'):
-        try:
-            df_ahrefs = pd.read_csv(io.BytesIO(ahrefs_bytes), sep=None, engine='python')
-        except:
-            df_ahrefs = pd.read_csv(io.BytesIO(ahrefs_bytes), sep=';')
+        # Szybka detekcja separatora zamiast wolnego engine='python' z sep=None
+        sample_text = ahrefs_bytes[:2048].decode('utf-8', errors='ignore')
+        sep = ';' if sample_text.count(';') > sample_text.count(',') else ','
+        df_ahrefs = pd.read_csv(io.BytesIO(ahrefs_bytes), sep=sep, engine='c')
     else:
         df_ahrefs = pd.read_excel(io.BytesIO(ahrefs_bytes))
         
-    # 2. Odczyt SERP (zakładka Clean Data)
+    # --- OPTYMALIZACJA ODCZYTU SERP ---
+    # Wczytujemy TYLKO te kolumny, które są nam potrzebne.
+    # Ogromnie zmniejsza to zużycie pamięci RAM i przyspiesza odczyt pliku w Streamlit Cloud!
+    def needed_cols(col_name):
+        c = str(col_name).strip().lower()
+        return c in ['keyword', 'type', 'domain', 'rank_group', 'rank_absolute', 'url', 'url_absolute']
+    
     try:
-        df_serp = pd.read_excel(io.BytesIO(serp_bytes), sheet_name='Clean Data')
+        df_serp = pd.read_excel(
+            io.BytesIO(serp_bytes), 
+            sheet_name='Clean Data',
+            usecols=needed_cols
+        )
     except Exception as e:
         return None, f"Błąd podczas analizowania zakładki 'Clean Data' w pliku SERP: {e}"
     
