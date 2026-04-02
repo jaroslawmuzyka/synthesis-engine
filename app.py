@@ -204,8 +204,9 @@ if st.session_state.get('processed', False):
     st.success("✅ Kompilacja potężnej bazy danych przebiegła z sukcesem!")
     
     # Inicjalizacja ZAKŁADEK
-    tab_main, tab_charts, tab_asset, tab_data = st.tabs([
+    tab_main, tab_insights, tab_charts, tab_asset, tab_data = st.tabs([
         "📊 Dashboard Główny", 
+        "💡 Wnioski Biznesowe",
         "📈 Analizy Złożone", 
         "📑 Segmenty MM_Asset_Type",
         "🗄️ Baza Danych (Interaktywna)"
@@ -252,6 +253,53 @@ if st.session_state.get('processed', False):
             use_container_width=True
         )
 
+    with tab_insights:
+        st.header("Lejek Optymalizacyjny: Insight'y i Wnioski zebranych danych")
+        st.markdown("Zgodnie z ułożeniem UX: **Gdzie jesteśmy? → Co poprawić w pierwszej kolejności? → Czego nam brakuje na rynku?**")
+        
+        vol_col = 'Volume' if 'Volume' in result_df.columns else None
+        if vol_col:
+            target_df = result_df.copy()
+            target_df['_vol_calc'] = pd.to_numeric(target_df[vol_col], errors='coerce').fillna(0)
+            
+            total_vol = target_df['_vol_calc'].sum()
+            vol_top3 = target_df[target_df['Rekomendacja'] == 'Brak działania']['_vol_calc'].sum()
+            vol_opt = target_df[target_df['Rekomendacja'] == 'Do optymalizacji']['_vol_calc'].sum()
+            vol_gap = target_df[~target_df['Rekomendacja'].isin(['Brak działania', 'Do optymalizacji'])]['_vol_calc'].sum()
+            
+            pct_top3 = vol_top3 / total_vol * 100 if total_vol > 0 else 0
+            pct_opt = vol_opt / total_vol * 100 if total_vol > 0 else 0
+            pct_gap = vol_gap / total_vol * 100 if total_vol > 0 else 0
+            
+            st.subheader("1. Gdzie jesteśmy? (Wolumen Rynkowy vs Udział MediaMarkt)")
+            co1, co2, co3 = st.columns(3)
+            co1.metric(f"🚀 Zabezpieczony Potencjał (TOP1-3)", f"{pct_top3:.1f} %", f"{vol_top3:,.0f} ruchu")
+            co2.metric(f"🛠️ Wolumen do Optymalizacji (TOP4-10)", f"{pct_opt:.1f} %", f"{vol_opt:,.0f} ruchu")
+            co3.metric(f"⚠️ Luka Rynkowa (Poza TOP10)", f"{pct_gap:.1f} %", f"{vol_gap:,.0f} ruchu", delta_color="inverse")
+            
+            st.markdown("---")
+            
+            st.subheader("2. Priorytetyzacja: Najszybsze Zwycięstwa (Low-Hanging Fruits)")
+            st.write("Skup się najpierw na tych frazach. Znajdują się one zaledwie na pozycjach TOP4-TOP10, ale posiadają gigantyczny napęd na ruch `Volume`.")
+            
+            df_quick_wins = target_df[target_df['Rekomendacja'] == 'Do optymalizacji'].sort_values('_vol_calc', ascending=False)
+            cols_to_show_qw = ['Keyword', 'Pozycja_MM', vol_col, 'MM_Asset_Type', 'L2_Intent', 'URL_MM']
+            
+            st.dataframe(df_quick_wins[[c for c in cols_to_show_qw if c in df_quick_wins.columns]].head(50), use_container_width=True)
+
+            st.markdown("---")
+
+            st.subheader("3. Luka Treści: Czego oczekuje rynek, a gdzie nas nie ma? (Brak w Top10)")
+            st.write("Oto potężny rynkowy wolumen dla zapytań, których my organicznie nie obsługujemy. Spójrz na wymagane przez poszczególne frazy zasoby w kolumnach typów i przekazuj je ekspertom do wdrożeń.")
+            
+            df_gap = target_df[~target_df['Rekomendacja'].isin(['Brak działania', 'Do optymalizacji'])].sort_values('_vol_calc', ascending=False)
+            cols_to_show_gap = ['Keyword', vol_col, 'MM_Asset_Type', 'Rekomendacja', 'Szukana Fraza SERP']
+            
+            st.dataframe(df_gap[[c for c in cols_to_show_gap if c in df_gap.columns]].head(100), use_container_width=True)
+            
+        else:
+            st.error("Brak kolumny Volume do sporządzenia zaawansowanych wniosków biznesowych.")
+            
     with tab_charts:
         st.header("Mikroskop SERP i Wykresy Intencji")
         
