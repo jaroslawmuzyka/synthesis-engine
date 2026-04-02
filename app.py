@@ -150,10 +150,7 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     # Dołączanie - formatowanie
     df_mm_selected['_join_key'] = df_mm_selected['keyword'].astype(str).str.strip().str.lower()
     
-    final_df = df_ahrefs.merge(df_mm_selected, on='_join_key', how='outer')
-    
-    # Ratowanie nazw Keyword dla fraz obciętych (które były w SERP a rzekomo zniknęły bo nie miały metryki Ahrefs)
-    final_df[ahrefs_keyword_col] = final_df[ahrefs_keyword_col].fillna(final_df['_join_key'])
+    final_df = df_ahrefs.merge(df_mm_selected, on='_join_key', how='left')
     
     final_df = final_df.drop(columns=['_join_key', 'keyword'], errors='ignore')
     
