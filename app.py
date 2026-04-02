@@ -72,7 +72,7 @@ def get_footprint(row):
 
 @st.cache_data(show_spinner=False)
 def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
-    # 1. Odczyt Ahrefs - Optymalizacja ładowania CSV
+    # 1. Odczyt Ahrefs
     if ahrefs_name.endswith('.csv'):
         sample_text = ahrefs_bytes[:2048].decode('utf-8', errors='ignore')
         sep = ';' if sample_text.count(';') > sample_text.count(',') else ','
@@ -80,7 +80,7 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     else:
         df_ahrefs = pd.read_excel(io.BytesIO(ahrefs_bytes))
         
-    # 2. Odczyt SERP - ładujemy niezbędne kolumny, weryfikujemy rank_absolute!
+    # 2. Odczyt SERP
     def needed_cols(col_name):
         c = str(col_name).strip().lower()
         return c in ['keyword', 'type', 'domain', 'rank_group', 'rank_absolute', 'url', 'url_absolute']
@@ -92,7 +92,7 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
             usecols=needed_cols
         )
     except Exception as e:
-        return None, None, f"Błąd podczas analizowania zakładki 'Clean Data' w pliku SERP: {e}"
+        return None, None, None, f"Błąd podczas analizowania zakładki 'Clean Data' w pliku SERP: {e}"
     
     df_serp.columns = [str(c).strip().lower() for c in df_serp.columns]
     
@@ -103,20 +103,35 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
             break
             
     if not ahrefs_keyword_col:
-        return None, None, "Plik Ahrefs nie zawiera jednoznacznej kolumny 'Keyword'."
+        return None, None, None, "Plik Ahrefs nie zawiera jednoznacznej kolumny 'Keyword'."
         
     if 'keyword' not in df_serp.columns or 'type' not in df_serp.columns or 'domain' not in df_serp.columns:
-        return None, None, "Plik SERP nie posiada kolumn (keyword, type, domain)."
+        return None, None, None, "Plik SERP nie posiada kolumn (keyword, type, domain)."
         
     if 'rank_absolute' not in df_serp.columns:
-        return None, None, "Plik SERP wygenerował błąd braku wymaganej kolumny 'rank_absolute'."
+        return None, None, None, "Plik SERP wygenerował błąd braku wymaganej kolumny 'rank_absolute'."
 
     # --- GENERACJA WIDOKU SERP DLA ANALITYKI ZANIM GO WYTNIEMY --
     global_serp_types = df_serp['type'].value_counts().reset_index()
     global_serp_types.columns = ['Typ SERP', 'Ilość Wystąpień']
-
     
-    # 4. Fitracja SERPu i przesuwanie wyłącznie do MM, i tylko organic
+    # 3. Zmodyfikowana generacja wykrojów per analiza SERP (dla Zakładki 2)
+    df_ahrefs['_join_key'] = df_ahrefs[ahrefs_keyword_col].astype(str).str.strip().str.lower()
+    df_serp['_join_key'] = df_serp['keyword'].astype(str).str.strip().str.lower()
+    
+    kat_cols = ['L1_Stage', 'L2_Intent', 'L3_MM_Segment', 'MM_Action', 'MM_Asset_Type']
+    
+    # Merge tylko dla kolumn potrzebnych do wykresów (oszczędzanie RAM)
+    cols_to_extract = ['_join_key'] + [c for c in kat_cols if c in df_ahrefs.columns]
+    df_serp_mapped = df_serp.merge(df_ahrefs[cols_to_extract], on='_join_key', how='inner')
+    
+    serp_cat_analytics = {}
+    for col in kat_cols:
+        if col in df_serp_mapped.columns:
+            grouped_serp = df_serp_mapped.groupby([col, 'type']).size().reset_index(name='Ilość Wystąpień')
+            serp_cat_analytics[col] = grouped_serp
+
+    # 4. Fitracja SERPu i przesuwanie wyłącznie do MM, i tylko organic dla głównej analizy
     df_mm = df_serp[(df_serp['type'] == 'organic') & (df_serp['domain'].astype(str).str.contains('mediamarkt.pl', na=False, case=False))].copy()
     
     # Upewniamy się, że to integer!
@@ -133,7 +148,6 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     df_mm_selected = df_mm_best[join_cols]
     
     # Dołączanie - formatowanie
-    df_ahrefs['_join_key'] = df_ahrefs[ahrefs_keyword_col].astype(str).str.strip().str.lower()
     df_mm_selected['_join_key'] = df_mm_selected['keyword'].astype(str).str.strip().str.lower()
     
     final_df = df_ahrefs.merge(df_mm_selected, on='_join_key', how='left')
@@ -151,7 +165,7 @@ def process_data(ahrefs_bytes, ahrefs_name, serp_bytes, serp_name):
     if url_col in final_df.columns:
         final_df = final_df.rename(columns={url_col: 'URL_MM'})
     
-    return final_df, global_serp_types, None
+    return final_df, global_serp_types, serp_cat_analytics, None
 
 # --- UI (INTERFEJS UŻYTKOWNIKA) ---
 
@@ -175,13 +189,14 @@ if run_btn and ahrefs_file and serp_file:
         ahrefs_bytes = ahrefs_file.getvalue()
         serp_bytes = serp_file.getvalue()
         
-        result_df, serp_analytics_df, error = process_data(ahrefs_bytes, ahrefs_file.name, serp_bytes, serp_file.name)
+        result_df, serp_analytics_df, serp_cat_analytics, error = process_data(ahrefs_bytes, ahrefs_file.name, serp_bytes, serp_file.name)
         
         if error:
             st.error(f"Wystąpił błąd układania danych: {error}")
         else:
             st.session_state['ready_data'] = result_df
             st.session_state['serp_analytics'] = serp_analytics_df
+            st.session_state['serp_cat_analytics'] = serp_cat_analytics
             st.session_state['processed'] = True
             st.rerun()
 
@@ -189,10 +204,10 @@ if st.session_state.get('processed', False):
     st.success("✅ Kompilacja potężnej bazy danych przebiegła z sukcesem!")
     
     # Inicjalizacja ZAKŁADEK
-    tab_main, tab_charts, tab_l3, tab_data = st.tabs([
+    tab_main, tab_charts, tab_asset, tab_data = st.tabs([
         "📊 Dashboard Główny", 
         "📈 Analizy Złożone", 
-        "📑 Segmenty L3 MM",
+        "📑 Segmenty MM_Asset_Type",
         "🗄️ Baza Danych (Interaktywna)"
     ])
     
@@ -279,17 +294,29 @@ if st.session_state.get('processed', False):
                          if vol_col:
                              st.write(f"🔥 Ile potencjalnego Wolumenu skrywa dany podział **{col}**:")
                              st.bar_chart(grouped.set_index(col)['Skumulowany Popyt / Volume'])
+                
+                # Dodanie dystrybucji typów SERP per zakładka:
+                st.write(f"📊 **Rozkład typów wyników w SERP dla podziału: {col}**")
+                if col in st.session_state.get('serp_cat_analytics', {}):
+                    df_types_grouped = st.session_state['serp_cat_analytics'][col]
+                    if not df_types_grouped.empty:
+                        # W st.bar_chart definiujemy X jako naszą kolumnę podziału, Y jako wolumeny, a Color uwypukla nam odrębną ścieżkę jako TYP z SERPU.
+                        st.bar_chart(df_types_grouped, x=col, y='Ilość Wystąpień', color='type')
+                    else:
+                        st.info("Baza odcięła wyniki dopasowania.")
+                else:
+                    st.info("Brak danych krzyżowych SERP dla tej kolumny.")
 
-    with tab_l3:
-        st.header("Mikroskop Segmentów L3_MM_Segment")
-        if 'L3_MM_Segment' in result_df.columns:
-            segments = result_df['L3_MM_Segment'].dropna().unique().tolist()
+    with tab_asset:
+        st.header("Mikroskop Segmentów MM_Asset_Type")
+        if 'MM_Asset_Type' in result_df.columns:
+            segments = result_df['MM_Asset_Type'].dropna().unique().tolist()
             if segments:
-                st.write("W poniższych zakładkach znajdziesz zawężone dane per wyselekcjonowany segment L3.")
+                st.write("W poniższych zakładkach znajdziesz zawężone dane per wyselekcjonowany typ zasobu.")
                 seg_tabs = st.tabs([str(s) for s in segments])
                 for idx, segment_val in enumerate(segments):
                     with seg_tabs[idx]:
-                        seg_df = result_df[result_df['L3_MM_Segment'] == segment_val]
+                        seg_df = result_df[result_df['MM_Asset_Type'] == segment_val]
                         count = len(seg_df)
                         vol_col = 'Volume' if 'Volume' in seg_df.columns else None
                         
@@ -301,11 +328,10 @@ if st.session_state.get('processed', False):
                         
                         st.dataframe(style_dataframe(seg_df), use_container_width=True)
             else:
-                st.info("Brak przypisanych segmentów w zebranej bazie.")
+                st.info("Brak przypisanych typów (MM_Asset_Type) w zebranej bazie.")
         else:
-            st.error("Kolumna 'L3_MM_Segment' nie została odnaleziona w pliku bazowym Ahrefs.")
-
-        
+            st.error("Kolumna 'MM_Asset_Type' nie została odnaleziona w bazie.")
+            
     with tab_data:
          st.header("Interaktywna Przeglądarka Tabelaryczna")
          st.markdown("Ten widżet to pełna baza pozbawiona restrykcji `na górne 100 wpisów`. Tabela obsługuje natywne strzałki kolumn (do sortowania) oraz lupkę w prawym górnym jej krańcu do dedykowanego wyszukiwania poszczególnych komórek.")
