@@ -189,13 +189,24 @@ if st.session_state.get('processed', False):
     st.success("✅ Kompilacja potężnej bazy danych przebiegła z sukcesem!")
     
     # Inicjalizacja ZAKŁADEK
-    tab_main, tab_charts, tab_data = st.tabs([
+    tab_main, tab_charts, tab_l3, tab_data = st.tabs([
         "📊 Dashboard Główny", 
         "📈 Analizy Złożone", 
+        "📑 Segmenty L3 MM",
         "🗄️ Baza Danych (Interaktywna)"
     ])
     
     result_df = st.session_state['ready_data']
+    
+    # Stylowanie do DataFrame (wyrzucamy formatowanie ułamków na Pozycja_MM!)
+    def style_dataframe(df):
+        # Aplikacja gradientów na rekomendacjach
+        def highlight_recommendation(val):
+            if val == "Brak działania": return 'background-color: rgba(46, 204, 113, 0.2); font-weight: bold;'
+            if val == "Do optymalizacji": return 'background-color: rgba(241, 196, 15, 0.2);'
+            if val and isinstance(val, str): return 'background-color: rgba(231, 76, 60, 0.1); color: #c0392b;'
+            return ''
+        return df.style.map(highlight_recommendation, subset=['Rekomendacja'])
     
     with tab_main:
         st.subheader("Bieżące statystyki widoczności (TOP10)")
@@ -237,7 +248,7 @@ if st.session_state.get('processed', False):
         st.subheader("Analizy wertykalne (Wolumeny i zbiory wg kategorii)")
         st.write("Wybierz odpowiednią klasyfikację z Ahrefs i spójrz jak dystrybuują się po niej zebrane zasoby wyszukiwań na rynku.")
         
-        kat_cols = ['L1_Stage', 'L2_Intent', 'L3_MM_Segment', 'MM_Action', 'MM_Asset_Status', 'MM_Asset_Type']
+        kat_cols = ['L1_Stage', 'L2_Intent', 'L3_MM_Segment', 'MM_Action', 'MM_Asset_Type']
         
         # Tworzy dedykowany podgląd zakładkami dla oszczędzenia okna SelectBoxa
         sub_tabs = st.tabs(kat_cols)
@@ -268,20 +279,36 @@ if st.session_state.get('processed', False):
                          if vol_col:
                              st.write(f"🔥 Ile potencjalnego Wolumenu skrywa dany podział **{col}**:")
                              st.bar_chart(grouped.set_index(col)['Skumulowany Popyt / Volume'])
+
+    with tab_l3:
+        st.header("Mikroskop Segmentów L3_MM_Segment")
+        if 'L3_MM_Segment' in result_df.columns:
+            segments = result_df['L3_MM_Segment'].dropna().unique().tolist()
+            if segments:
+                st.write("W poniższych zakładkach znajdziesz zawężone dane per wyselekcjonowany segment L3.")
+                seg_tabs = st.tabs([str(s) for s in segments])
+                for idx, segment_val in enumerate(segments):
+                    with seg_tabs[idx]:
+                        seg_df = result_df[result_df['L3_MM_Segment'] == segment_val]
+                        count = len(seg_df)
+                        vol_col = 'Volume' if 'Volume' in seg_df.columns else None
+                        
+                        cl1, cl2 = st.columns(2)
+                        cl1.metric("Wyłapanych fraz w segmencie", count)
+                        if vol_col:
+                            total_vol = sum(pd.to_numeric(seg_df[vol_col], errors='coerce').fillna(0))
+                            cl2.metric("Skumulowany Wolumen (Suma)", total_vol)
+                        
+                        st.dataframe(style_dataframe(seg_df), use_container_width=True)
+            else:
+                st.info("Brak przypisanych segmentów w zebranej bazie.")
+        else:
+            st.error("Kolumna 'L3_MM_Segment' nie została odnaleziona w pliku bazowym Ahrefs.")
+
         
     with tab_data:
          st.header("Interaktywna Przeglądarka Tabelaryczna")
          st.markdown("Ten widżet to pełna baza pozbawiona restrykcji `na górne 100 wpisów`. Tabela obsługuje natywne strzałki kolumn (do sortowania) oraz lupkę w prawym górnym jej krańcu do dedykowanego wyszukiwania poszczególnych komórek.")
          
-         # Stylowanie do DataFrame (wyrzucamy formatowanie ułamków na Pozycja_MM!)
-         def style_dataframe(df):
-             # Aplikacja gradientów na rekomendacjach
-             def highlight_recommendation(val):
-                 if val == "Brak działania": return 'background-color: rgba(46, 204, 113, 0.2); font-weight: bold;'
-                 if val == "Do optymalizacji": return 'background-color: rgba(241, 196, 15, 0.2);'
-                 if val and isinstance(val, str): return 'background-color: rgba(231, 76, 60, 0.1); color: #c0392b;'
-                 return ''
-             return df.style.map(highlight_recommendation, subset=['Rekomendacja'])
-             
          s_df = style_dataframe(result_df)
          st.dataframe(s_df, use_container_width=True, height=750)
